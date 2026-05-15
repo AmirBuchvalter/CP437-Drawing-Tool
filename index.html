@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IBM Drawing Tool</title>
+<style>
+  :root {
+    --bg: #111;
+    --panel: #1e1e1e;
+    --border: #3a3a3a;
+    --text: #ccc;
+    --accent: #fff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    height: 100%; overflow: hidden;
+  }
+  body { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ---- header ---- */
+  header {
+    display: flex; gap: 6px; align-items: center;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 11px; margin: 0; opacity: 0.6; letter-spacing: 1px; white-space: nowrap; }
+  .sep { width: 1px; background: var(--border); align-self: stretch; margin: 0 2px; }
+  #status { font-size: 10px; opacity: 0.4; margin-left: auto; }
+
+  /* ---- layout ---- */
+  main { display: flex; flex: 1; min-height: 0; }
+
+  /* ---- sidebar ---- */
+  aside {
+    width: 160px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  .sec { padding: 5px 6px 3px; }
+  .sec-title {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
+    opacity: 0.4; margin-bottom: 4px;
+  }
+
+  /* brushes */
+  .brush-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+  }
+  .brush-btn {
+    width: 100%; aspect-ratio: 1;
+    background: #000; color: #999;
+    border: 1px solid #333; cursor: pointer;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 14px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    transition: border-color 0.1s;
+  }
+  .brush-btn:hover { border-color: #777; color: #fff; }
+  .brush-btn.active { border-color: #fff; color: #fff; background: #1a1a1a; }
+
+  /* current preview */
+  .current-row {
+    display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+  }
+  .current-cell {
+    width: 32px; height: 32px; border: 1px solid #555;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-family: Consolas, "Courier New", monospace;
+    flex-shrink: 0;
+  }
+  .fg-bg-labels { display: flex; flex-direction: column; gap: 3px; font-size: 9px; opacity: 0.5; }
+  .mini-swatches { display: flex; flex-direction: column; gap: 3px; }
+  .mini-swatch { width: 20px; height: 14px; border: 1px solid #555; cursor: pointer; position: relative; }
+  .mini-swatch.active::after { content: ""; position: absolute; inset: -2px; border: 2px solid #fff; pointer-events: none; }
+
+  /* palette */
+  .palette-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 1px;
+  }
+  .swatch {
+    width: 100%; aspect-ratio: 1;
+    border: 1px solid #333; cursor: pointer;
+    position: relative; transition: border-color 0.1s;
+  }
+  .swatch:hover { border-color: #aaa; }
+  .swatch.active::after {
+    content: ""; position: absolute; inset: -2px;
+    border: 2px solid #fff; pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ---- canvas area ---- */
+  .canvas-wrap {
+    flex: 1; overflow: auto;
+    background: #090909;
+    display: flex; align-items: flex-start; justify-content: flex-start;
+    padding: 12px;
+  }
+  canvas {
+    image-rendering: pixelated;
+    cursor: crosshair;
+    display: block;
+  }
+
+  /* ---- toolbar buttons ---- */
+  .btn {
+    background: #272727; color: var(--text);
+    border: 1px solid #3a3a3a; padding: 3px 8px;
+    font-family: inherit; font-size: 11px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover { background: #333; }
+  .btn.active { background: #444; border-color: #666; color: #fff; }
+
+  .divider { width: 1px; height: 16px; background: var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>IBM DRAWING TOOL</h1>
+  <div class="sep"></div>
+  <button class="btn" id="btn-clear">Clear</button>
+  <button class="btn" id="btn-undo">Undo</button>
+  <div class="divider"></div>
+  <button class="btn" id="btn-save-json">Save .json</button>
+  <button class="btn" id="btn-load">Load .json</button>
+  <div class="divider"></div>
+  <button class="btn" id="btn-export-png">Export PNG</button>
+  <div class="divider"></div>
+  <button class="btn active" id="btn-grid">Grid</button>
+  <button class="btn" id="btn-snap" title="Snap: new chars slide to the nearest empty cell instead of overwriting">Snap</button>
+  <button class="btn" id="btn-zoom" title="Cycle zoom 1× → 2× → 3× → 4×">Zoom 2×</button>
+  <button class="btn" id="btn-eraser" title="Eraser: left-click erases instead of painting">Eraser</button>
+  <input type="file" id="file-input" accept=".json" style="display:none">
+  <div id="status">—</div>
+</header>
+
+<main>
+  <aside>
+
+    <div class="sec">
+      <div class="sec-title">Brush</div>
+      <div class="brush-grid" id="brush-grid"></div>
+      <div style="display:flex;gap:4px;align-items:center;margin-top:6px">
+        <span style="font-size:9px;opacity:0.5;text-transform:uppercase">Custom</span>
+        <input id="custom-brush" maxlength="1" placeholder="·"
+               style="width:28px;height:22px;background:#000;color:#ddd;
+                      border:1px solid #444;text-align:center;
+                      font-family:inherit;font-size:14px;padding:0">
+        <button class="btn" id="btn-use-custom" style="padding:2px 6px">Use</button>
+      </div>
+    </div>
+
+    <div class="sec" style="border-top:1px solid var(--border)">
+      <div class="sec-title">Current</div>
+      <div class="current-row">
+        <div class="current-cell" id="current-preview">░</div>
+        <div class="fg-bg-labels">
+          <span>FG</span>
+          <span>BG</span>
+        </div>
+        <div class="mini-swatches">
+          <div class="mini-swatch" id="current-fg" style="background:#AAAAAA"></div>
+          <div class="mini-swatch" id="current-bg" style="background:#000000"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec" style="border-top:1px solid var(--border)">
+      <div class="sec-title">FG Color</div>
+      <div class="palette-grid" id="palette-fg"></div>
+    </div>
+
+    <div class="sec" style="border-top:1px solid var(--border)">
+      <div class="sec-title">BG Color</div>
+      <div class="palette-grid" id="palette-bg"></div>
+    </div>
+
+    <div class="sec" style="border-top:1px solid var(--border)">
+      <div class="sec-title">Custom Color</div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;opacity:0.8">
+          <span style="width:20px">FG</span>
+          <input type="color" id="picker-fg" value="#AAAAAA"
+                 style="width:100%;height:24px;background:#000;border:1px solid #444;cursor:pointer;padding:0">
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;opacity:0.8">
+          <span style="width:20px">BG</span>
+          <input type="color" id="picker-bg" value="#000000"
+                 style="width:100%;height:24px;background:#000;border:1px solid #444;cursor:pointer;padding:0">
+        </label>
+      </div>
+    </div>
+
+  </aside>
+
+  <div class="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+</main>
+
+<script>
+(() => {
+  // ---- Config ----
+  const COLS   = 40;
+  const ROWS   = 30;
+  // Each cell is 12×16 px on the canvas — wide enough for a char, tall enough to breathe
+  const CELL_W = 12;
+  const CELL_H = 16;
+  const CANVAS_W = COLS * CELL_W;  // 480
+  const CANVAS_H = ROWS * CELL_H;  // 480
+
+  // Font size matches cell height; chars are x-scaled to fill cell width
+  const FONT = '16px Consolas, "Courier New", monospace';
+
+  // IBM CGA 16-color palette
+  const PALETTE = [
+    ["Black",        "#000000"],
+    ["Blue",         "#0000AA"],
+    ["Green",        "#00AA00"],
+    ["Cyan",         "#00AAAA"],
+    ["Red",          "#AA0000"],
+    ["Magenta",      "#AA00AA"],
+    ["Brown",        "#AA5500"],
+    ["LightGray",    "#AAAAAA"],
+    ["DarkGray",     "#555555"],
+    ["LightBlue",    "#5555FF"],
+    ["LightGreen",   "#55FF55"],
+    ["LightCyan",    "#55FFFF"],
+    ["LightRed",     "#FF5555"],
+    ["LightMagenta", "#FF55FF"],
+    ["Yellow",       "#FFFF55"],
+    ["White",        "#FFFFFF"],
+  ];
+
+  // CP437-ish block / shade / box-draw / symbol brushes
+  const BRUSHES = [
+    " ","░","▒","▓","█","▀","▄",
+    "▌","▐","▘","▝","▖","▗","▚",
+    "▞","■","□","▪","▫","●","○",
+    "◆","◇","◉","·","•","★","☆",
+    "┌","┐","└","┘","│","─","┼",
+    "├","┤","┬","┴","╔","╗","╚",
+    "╝","║","═","╬","╳","±","÷",
+  ];
+
+  // ---- State ----
+  const state = {
+    grid:       makeGrid(),
+    brush:      "░",
+    fg:         "#AAAAAA",
+    bg:         "#000000",
+    painting:   false,
+    eraseMode:  false,  // drag paints eraser
+    eraserTool: false,  // toggle: left-click = erase when true
+    lastCell:   null,
+    history:    [],
+    showGrid:   true,
+    snap:       false,
+    zoom:       2,
+  };
+
+  function makeGrid() {
+    return Array.from({ length: ROWS }, () =>
+      Array.from({ length: COLS }, () => ({ ch: " ", fg: "#AAAAAA", bg: "#000000" }))
+    );
+  }
+
+  // ---- Canvas setup ----
+  const canvas = document.getElementById("canvas");
+  canvas.width  = CANVAS_W;
+  canvas.height = CANVAS_H;
+
+  function applyZoom() {
+    canvas.style.width  = (CANVAS_W * state.zoom) + "px";
+    canvas.style.height = (CANVAS_H * state.zoom) + "px";
+    const btn = document.getElementById("btn-zoom");
+    if (btn) btn.textContent = "Zoom " + state.zoom + "×";
+  }
+  applyZoom();
+
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  // Measure reference glyph — scale both axes so every char fills the cell
+  // exactly, matching the rectangle. Block chars then tile with zero gaps
+  // in both dimensions; other glyphs get uniformly stretched to the same box.
+  ctx.font = FONT;
+  ctx.textBaseline = "alphabetic";
+  const refMetrics = ctx.measureText("█");
+  const GLYPH_W = refMetrics.width || CELL_W;
+  const GLYPH_H = (refMetrics.actualBoundingBoxAscent || 13)
+                + (refMetrics.actualBoundingBoxDescent || 3);
+  const X_SCALE = CELL_W / GLYPH_W;
+  const Y_SCALE = CELL_H / GLYPH_H;
+  const ASC     = refMetrics.actualBoundingBoxAscent || 13;
+
+  // Block/shade chars are designed to fill their em-box — use the reference
+  // scale for them so rows tile perfectly. Every other char is measured
+  // individually and scaled into the cell, so it can never overflow.
+  const FULL_BLOCK_CHARS = new Set([
+    "█","░","▒","▓","▀","▄","▌","▐",
+    "▘","▝","▖","▗","▚","▞"
+  ]);
+
+  function drawGlyph(c2d, ch, x, y) {
+    if (FULL_BLOCK_CHARS.has(ch)) {
+      c2d.save();
+      c2d.translate(x, y + ASC * Y_SCALE);
+      c2d.scale(X_SCALE, Y_SCALE);
+      c2d.fillText(ch, 0, 0);
+      c2d.restore();
+      return;
+    }
+    const m   = c2d.measureText(ch);
+    const asc = m.actualBoundingBoxAscent  || ASC;
+    const dsc = m.actualBoundingBoxDescent || (GLYPH_H - ASC);
+    const gw  = m.width || GLYPH_W;
+    const gh  = (asc + dsc) || GLYPH_H;
+    const sx  = CELL_W / gw;
+    const sy  = CELL_H / gh;
+    c2d.save();
+    c2d.translate(x, y + asc * sy);
+    c2d.scale(sx, sy);
+    c2d.fillText(ch, 0, 0);
+    c2d.restore();
+  }
+
+  function renderCell(r, c) {
+    const cell = state.grid[r][c];
+    const x = c * CELL_W;
+    const y = r * CELL_H;
+
+    ctx.fillStyle = cell.bg;
+    ctx.fillRect(x, y, CELL_W, CELL_H);
+
+    if (cell.ch !== " ") {
+      ctx.fillStyle = cell.fg;
+      ctx.font = FONT;
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = "left";
+      drawGlyph(ctx, cell.ch, x, y);
+    }
+  }
+
+  function renderAll() {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++)
+        renderCell(r, c);
+    if (state.showGrid) drawGrid();
+  }
+
+  // A cell is "filled" if it has a glyph OR a non-black background.
+  // Grid lines between two filled cells are suppressed so shapes meet
+  // with no visible gap.
+  function isFilled(r, c) {
+    const cell = state.grid[r][c];
+    return cell.ch !== " " || (cell.bg && cell.bg.toUpperCase() !== "#000000");
+  }
+
+  function drawGrid() {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 1;
+
+    // Vertical segments — between col c-1 and col c, per row
+    for (let c = 1; c < COLS; c++) {
+      for (let r = 0; r < ROWS; r++) {
+        if (isFilled(r, c - 1) && isFilled(r, c)) continue;
+        ctx.beginPath();
+        ctx.moveTo(c * CELL_W + 0.5, r * CELL_H);
+        ctx.lineTo(c * CELL_W + 0.5, (r + 1) * CELL_H);
+        ctx.stroke();
+      }
+    }
+    // Horizontal segments — between row r-1 and row r, per col
+    for (let r = 1; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (isFilled(r - 1, c) && isFilled(r, c)) continue;
+        ctx.beginPath();
+        ctx.moveTo(c * CELL_W,       r * CELL_H + 0.5);
+        ctx.lineTo((c + 1) * CELL_W, r * CELL_H + 0.5);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // ---- Painting ----
+  function cellAt(e) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = CANVAS_W / rect.width;
+    const sy = CANVAS_H / rect.height;
+    const c = Math.floor((e.clientX - rect.left) * sx / CELL_W);
+    const r = Math.floor((e.clientY - rect.top)  * sy / CELL_H);
+    return (c >= 0 && c < COLS && r >= 0 && r < ROWS) ? { r, c } : null;
+  }
+
+  function isEmpty(r, c) {
+    return state.grid[r][c].ch === " ";
+  }
+
+  function paintCell(r, c, erase, dr = 0, dc = 0) {
+    // Snap = "no overlap, no gap": skip any cell that is already occupied.
+    // The new stroke halts cleanly at the edge of existing shapes and
+    // resumes past them — shapes end up flush against each other.
+    if (!erase && state.snap && !isEmpty(r, c)) return;
+
+    const tr = r, tc = c;
+    const cell = state.grid[tr][tc];
+    const next = erase
+      ? { ch: " ", fg: state.fg, bg: "#000000" }
+      : { ch: state.brush, fg: state.fg, bg: state.bg };
+    if (cell.ch === next.ch && cell.fg === next.fg && cell.bg === next.bg) return;
+    state.grid[tr][tc] = next;
+    renderCell(tr, tc);
+    if (state.showGrid) drawGrid();
+  }
+
+  function bresenham(r0, c0, r1, c1) {
+    const pts = [];
+    let dr = Math.abs(r1 - r0), dc = Math.abs(c1 - c0);
+    let sr = r0 < r1 ? 1 : -1, sc = c0 < c1 ? 1 : -1;
+    let err = dc - dr, r = r0, c = c0;
+    for (;;) {
+      pts.push([r, c]);
+      if (r === r1 && c === c1) break;
+      const e2 = 2 * err;
+      if (e2 > -dr) { err -= dr; c += sc; }
+      if (e2 <  dc) { err += dc; r += sr; }
+    }
+    return pts;
+  }
+
+  function pushHistory() {
+    state.history.push(JSON.stringify(state.grid));
+    if (state.history.length > 100) state.history.shift();
+  }
+
+  canvas.addEventListener("mousedown", (e) => {
+    const cell = cellAt(e);
+    if (!cell) return;
+    pushHistory();
+    state.painting  = true;
+    state.eraseMode = (e.button === 2) || state.eraserTool;
+    state.lastCell  = cell;
+    paintCell(cell.r, cell.c, state.eraseMode, 0, 0);
+  });
+  canvas.addEventListener("mousemove", (e) => {
+    const cell = cellAt(e);
+    if (!cell) return;
+    document.getElementById("status").textContent = `col ${cell.c}  row ${cell.r}`;
+    if (!state.painting) return;
+    const { r: r0, c: c0 } = state.lastCell;
+    const dr = cell.r - r0, dc = cell.c - c0;
+    bresenham(r0, c0, cell.r, cell.c).forEach(([r, c]) =>
+      paintCell(r, c, state.eraseMode, dr, dc));
+    state.lastCell = cell;
+  });
+  window.addEventListener("mouseup", () => { state.painting = false; });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // ---- Brush buttons ----
+  const brushGrid = document.getElementById("brush-grid");
+  BRUSHES.forEach((ch) => {
+    const b = document.createElement("button");
+    b.className = "brush-btn";
+    b.textContent = ch === " " ? "·" : ch;
+    if (ch === " ") b.title = "space / erase to BG";
+    if (ch === state.brush) b.classList.add("active");
+    b.addEventListener("click", () => {
+      state.brush = ch;
+      brushGrid.querySelectorAll(".brush-btn").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      updateCurrent();
+    });
+    brushGrid.appendChild(b);
+  });
+
+  // ---- Palette ----
+  function buildPalette(id, which) {
+    const cont = document.getElementById(id);
+    PALETTE.forEach(([name, hex]) => {
+      const s = document.createElement("div");
+      s.className = "swatch";
+      s.style.background = hex;
+      s.title = name + " " + hex;
+      s.dataset.hex = hex.toUpperCase();
+      s.addEventListener("click", () => {
+        state[which] = hex;
+        syncPaletteActive(which);
+        updateCurrent();
+      });
+      cont.appendChild(s);
+    });
+    syncPaletteActive(which);
+  }
+  function syncPaletteActive(which) {
+    const cont = document.getElementById(which === "fg" ? "palette-fg" : "palette-bg");
+    const target = state[which].toUpperCase();
+    cont.querySelectorAll(".swatch").forEach(s => {
+      s.classList.toggle("active", s.dataset.hex === target);
+    });
+  }
+  buildPalette("palette-fg", "fg");
+  buildPalette("palette-bg", "bg");
+
+  function updateCurrent() {
+    const p = document.getElementById("current-preview");
+    p.textContent = state.brush === " " ? "·" : state.brush;
+    p.style.color      = state.fg;
+    p.style.background = state.bg;
+    document.getElementById("current-fg").style.background = state.fg;
+    document.getElementById("current-bg").style.background = state.bg;
+    const pickerFg = document.getElementById("picker-fg");
+    const pickerBg = document.getElementById("picker-bg");
+    if (pickerFg) pickerFg.value = state.fg;
+    if (pickerBg) pickerBg.value = state.bg;
+    syncPaletteActive("fg");
+    syncPaletteActive("bg");
+  }
+  updateCurrent();
+
+  // ---- Toolbar buttons ----
+  document.getElementById("btn-clear").onclick = () => {
+    pushHistory();
+    state.grid = makeGrid();
+    renderAll();
+  };
+
+  document.getElementById("btn-undo").onclick = () => {
+    const prev = state.history.pop();
+    if (!prev) return;
+    state.grid = JSON.parse(prev);
+    renderAll();
+  };
+
+  const gridBtn = document.getElementById("btn-grid");
+  gridBtn.onclick = () => {
+    state.showGrid = !state.showGrid;
+    gridBtn.classList.toggle("active", state.showGrid);
+    renderAll();
+  };
+
+  const snapBtn = document.getElementById("btn-snap");
+  snapBtn.onclick = () => {
+    state.snap = !state.snap;
+    snapBtn.classList.toggle("active", state.snap);
+  };
+
+  const zoomBtn = document.getElementById("btn-zoom");
+  zoomBtn.onclick = () => {
+    state.zoom = state.zoom >= 4 ? 1 : state.zoom + 1;
+    applyZoom();
+  };
+
+  const eraserBtn = document.getElementById("btn-eraser");
+  eraserBtn.onclick = () => {
+    state.eraserTool = !state.eraserTool;
+    eraserBtn.classList.toggle("active", state.eraserTool);
+    canvas.style.cursor = state.eraserTool ? "cell" : "crosshair";
+  };
+
+  // Custom brush: accept any typed character
+  const customInput = document.getElementById("custom-brush");
+  function applyCustomBrush() {
+    const ch = customInput.value;
+    if (!ch) return;
+    state.brush = ch;
+    brushGrid.querySelectorAll(".brush-btn").forEach(x => x.classList.remove("active"));
+    updateCurrent();
+  }
+  document.getElementById("btn-use-custom").onclick = applyCustomBrush;
+  customInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { applyCustomBrush(); e.preventDefault(); }
+  });
+
+  // Full color wheel pickers
+  document.getElementById("picker-fg").addEventListener("input", (e) => {
+    state.fg = e.target.value.toUpperCase();
+    updateCurrent();
+  });
+  document.getElementById("picker-bg").addEventListener("input", (e) => {
+    state.bg = e.target.value.toUpperCase();
+    updateCurrent();
+  });
+
+  document.getElementById("btn-save-json").onclick = () => {
+    const data = {
+      version: 1, cols: COLS, rows: ROWS,
+      palette: PALETTE.map(([, hex]) => hex),
+      grid: state.grid,
+    };
+    download(
+      "data:application/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2)),
+      "drawing.json"
+    );
+  };
+
+  document.getElementById("btn-load").onclick = () =>
+    document.getElementById("file-input").click();
+
+  document.getElementById("file-input").onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data.grid || data.cols !== COLS || data.rows !== ROWS)
+          throw new Error(`expected ${COLS}×${ROWS} grid`);
+        pushHistory();
+        // Back-compat: if cells used palette indices, map to hex strings
+        const pal = Array.isArray(data.palette) ? data.palette : PALETTE.map(p => p[1]);
+        state.grid = data.grid.map(row => row.map(c => ({
+          ch: c.ch,
+          fg: typeof c.fg === "number" ? pal[c.fg] : c.fg,
+          bg: typeof c.bg === "number" ? pal[c.bg] : c.bg,
+        })));
+        renderAll();
+      } catch (err) { alert("Load failed: " + err.message); }
+    };
+    reader.readAsText(f);
+    e.target.value = "";
+  };
+
+  document.getElementById("btn-export-png").onclick = () => {
+    // Render to a clean offscreen canvas (no grid)
+    const off = document.createElement("canvas");
+    off.width  = CANVAS_W;
+    off.height = CANVAS_H;
+    const oc = off.getContext("2d");
+    oc.imageSmoothingEnabled = false;
+    oc.font = FONT;
+    oc.textBaseline = "alphabetic";
+    oc.fillStyle = "#000";
+    oc.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const cell = state.grid[r][c];
+        const x = c * CELL_W, y = r * CELL_H;
+        oc.fillStyle = cell.bg;
+        oc.fillRect(x, y, CELL_W, CELL_H);
+        if (cell.ch !== " ") {
+          oc.fillStyle = cell.fg;
+          oc.font = FONT;
+          oc.textBaseline = "alphabetic";
+          drawGlyph(oc, cell.ch, x, y);
+        }
+      }
+    }
+    download(off.toDataURL("image/png"), "drawing.png");
+  };
+
+  function download(url, name) {
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  // ---- Keyboard ----
+  window.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.key === "z") {
+      document.getElementById("btn-undo").click();
+      e.preventDefault();
+    }
+  });
+
+  renderAll();
+})();
+</script>
+</body>
+</html>
